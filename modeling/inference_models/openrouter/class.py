@@ -112,12 +112,32 @@ class model_backend(api_handler_model_backend):
     ) -> List:
 
         # Store context in memory to use it for comparison with generated content
-        utils.koboldai_vars.lastctx = prompt_plaintext
+        utils.koboldai_vars.lastctx = prompt_plaintext      
 
-        if is_core & utils.koboldai_vars.chatmode: #TODO: Improve chat mode, openrouter permits sending "user" and "bot" names in addition to the messages
+        if is_core & utils.koboldai_vars.chatmode: #TODO: This could potentially get busted if someone writes
             promptormessage = "messages"
-            payload = [{"role": "user", "content": prompt_plaintext}]
 
+            payload = [{"role": "system", "content": ""}]   
+            actors = [utils.koboldai_vars.botname, utils.koboldai_vars.chatname]
+            actor_type = {utils.koboldai_vars.botname : "assistant", utils.koboldai_vars.chatname: "user"}
+
+            formatting = prompt_plaintext.split("\n")
+            count = 0
+
+            for line in formatting:
+                handled = False
+                for actor_name in actors:
+                    reply = line.split(actor_name + ":")
+                    if len(reply)==2:
+                        payload.append({"role": actor_type[actor_name], "content": actor_name + ":  " + reply[1]})
+                        count+=1
+                        handled = True
+                        break
+                if handled:
+                    continue
+                else:
+                    payload[count]["content"] = payload[count]["content"] + "\n" + line
+        
         else:
             promptormessage = "prompt"
             payload = prompt_plaintext
@@ -128,7 +148,7 @@ class model_backend(api_handler_model_backend):
             "model": self.model_name, #Required for OpenRouter!
 
             # TODO: Implement streaming & more stop sequences
-            "stop": self.plaintext_stoppers,
+            "stop": self.plaintext_stoppers,    
             "stream": False,
 
             "max_tokens": max_new,
@@ -145,6 +165,9 @@ class model_backend(api_handler_model_backend):
             
         }
         
+        if not utils.koboldai_vars.quiet:
+            print(reqdata)
+
         url=self.serverurl
         headers={
                 "Authorization":"Bearer " + self.key,
@@ -159,6 +182,12 @@ class model_backend(api_handler_model_backend):
 
         outputs=[]
         for item in items: #Strip the outer layer of the response, and append the inner layer to the outputs list
-            outputs.append(item["choices"][0]["text"]) #We now have a list of the texts [{"textA"}, {"textB"}, {"textC"} etc.]
+            if not utils.koboldai_vars.quiet:
+                print(item)
+            
+            if is_core & utils.koboldai_vars.chatmode:
+                outputs.append(item['choices'][0]['message']['content'])
+            else:
+                outputs.append(item["choices"][0]["text"]) #We now have a list of the texts [{"textA"}, {"textB"}, {"textC"} etc.]
 
         return outputs

@@ -143,6 +143,8 @@ class GenerationSettings:
                 overrides.get(setting, getattr(utils.koboldai_vars, setting)),
             )
 
+    
+
 
 @dataclass
 class ModelCapabilities:

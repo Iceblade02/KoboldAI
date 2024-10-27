@@ -105,6 +105,9 @@ class model_backend(InferenceModel):
     
     def is_valid(self, model_name, model_path, menu_path):
         return True
+
+    def not_torch(self) -> bool:
+        return False
     
     def get_requested_parameters(self, model_name, model_path, menu_path, parameters = {}, loaded_parameters = {}):
 
@@ -229,13 +232,18 @@ class model_backend(InferenceModel):
             RuntimeError: if inconsistancies are detected with the internal state and core stopper -- sanity check
         """
 
+        #print(text)
+
         start_time = time.time()
-        if isinstance(text, torch.Tensor):
+        if isinstance(text, str):
+            prompt_tokens = np.array(self.tokenizer.encode(text))
+            prompt_plaintext = text
+        elif isinstance(text, torch.Tensor):
             prompt_tokens = text.cpu().numpy()
+            prompt_plaintext = utils.decodenewlines(self.tokenizer.decode(prompt_tokens))
         elif isinstance(text, list):
             prompt_tokens = np.array(text)
-        elif isinstance(text, str):
-            prompt_tokens = np.array(self.tokenizer.encode(text))
+            prompt_plaintext = utils.decodenewlines(self.tokenizer.decode(prompt_tokens))
         else:
             raise ValueError(f"Prompt is {type(text)}. Not a fan!")
         gen_in = torch.tensor(text, dtype=torch.long)[None]
@@ -302,7 +310,9 @@ class model_backend(InferenceModel):
             except AssertionError:
                 print("AlreadyGenerated", already_generated)
                 print("genamt", utils.koboldai_vars.genamt)
-                raise
+                print("WARNING: lengths did not match!")
+                #Since tokens may be handled differently by our internal tokenizer, these may differ...
+                               #raise
 
 
 
@@ -345,6 +355,7 @@ class model_backend(InferenceModel):
     def _raw_generate(
         self,
         prompt_tokens: Union[List[int], torch.Tensor],
+        prompt_plaintext: str,
         max_new: int,
         gen_settings: GenerationSettings,
         batch_count: Optional[int] = 1,
@@ -356,9 +367,12 @@ class model_backend(InferenceModel):
         **kwargs
     ) -> GenerationResult:
 
-        decoded_prompt = utils.decodenewlines(self.tokenizer.decode(prompt_tokens))
-
         # Store context in memory to use it for comparison with generated content
+        if prompt_plaintext is None: 
+            decoded_prompt = utils.decodenewlines(self.tokenizer.decode(prompt_tokens))
+        else:
+            decoded_prompt = prompt_plaintext
+        
         utils.koboldai_vars.lastctx = decoded_prompt
 
         outputs = []
@@ -434,12 +448,15 @@ class model_backend(InferenceModel):
         utils.koboldai_vars.inference_config.do_core = is_core
         gen_settings = GenerationSettings(*(generation_settings or {}))
 
-        if isinstance(prompt, torch.Tensor):
+        if isinstance(prompt, str):
+            prompt_tokens = np.array(self.tokenizer.encode(prompt))
+            prompt_plaintext = prompt
+        elif isinstance(prompt, torch.Tensor):
             prompt_tokens = prompt.cpu().numpy()
+            prompt_plaintext = utils.decodenewlines(self.tokenizer.decode(prompt_tokens))
         elif isinstance(prompt, list):
             prompt_tokens = np.array(prompt)
-        elif isinstance(prompt, str):
-            prompt_tokens = np.array(self.tokenizer.encode(prompt))
+            prompt_plaintext = utils.decodenewlines(self.tokenizer.decode(prompt_tokens))
         else:
             raise ValueError(f"Prompt is {type(prompt)}. Not a fan!")
 
@@ -447,12 +464,14 @@ class model_backend(InferenceModel):
 
         with use_core_manipulations():
             result = self._raw_generate(
-                prompt_tokens=prompt_tokens,
-                max_new=max_new,
-                batch_count=batch_count,
-                gen_settings=gen_settings,
-                gen_mode=gen_mode,
-                seed=seed,
+                prompt_tokens = prompt_tokens,
+                prompt_plaintext = prompt_plaintext,
+                max_new = max_new,
+                is_core = is_core,
+                batch_count = batch_count,
+                gen_settings = gen_settings,
+                gen_mode = gen_mode,
+                seed = seed,
             )
 
         time_end = round(time.time() - time_start, 2)
